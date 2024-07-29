@@ -25,7 +25,7 @@ class SearcherService(Construct):
             handler="N/A",
             environment={
                 "QW_LAMBDA_INDEX_BUCKET": store_bucket.bucket_name,
-                "QW_LAMBDA_METASTORE_BUCKET": store_bucket.bucket_name,
+                "QW_LAMBDA_METASTORE_URI": f"s3://${store_bucket.bucket_name}/index#polling_interval=60s",
                 "QW_LAMBDA_INDEX_ID": index_id,
                 **environment,
             },
