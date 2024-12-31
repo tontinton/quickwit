@@ -75,12 +75,6 @@ impl JsonDoc {
             )),
         }
     }
-
-    #[cfg(feature = "vrl")]
-    pub fn try_from_vrl_doc(vrl_doc: VrlDoc) -> Result<Self, DocProcessorError> {
-        let json_value = serde_json::to_value(vrl_doc.vrl_value)?;
-        Self::try_from_json_value(json_value, vrl_doc.num_bytes)
-    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -195,6 +189,30 @@ fn try_into_json_docs(
 }
 
 #[cfg(feature = "vrl")]
+enum OneOrMany<T> {
+    One(T),
+    Many(Vec<T>),
+}
+
+#[cfg(feature = "vrl")]
+fn one_or_many_from_vrl_doc(vrl_doc: VrlDoc) -> OneOrMany<Result<JsonDoc, DocProcessorError>> {
+    match serde_json::to_value(vrl_doc.vrl_value) {
+        Ok(JsonValue::Object(json_obj)) => OneOrMany::One(Ok(JsonDoc::new(json_obj, vrl_doc.num_bytes))),
+        Ok(JsonValue::Array(json_arr)) => {
+            let num_bytes = vrl_doc.num_bytes / json_arr.len();
+            let results = json_arr.into_iter()
+                .map(|obj| JsonDoc::try_from_json_value(obj, num_bytes))
+                .collect::<Vec<_>>();
+            OneOrMany::Many(results)
+        },
+        Err(e) => OneOrMany::One(Err(DocProcessorError::from(e))),
+        _ => OneOrMany::One(Err(DocProcessorError::JsonParsing(
+            "document is not an object or array".to_string(),
+        ))),
+    }
+}
+
+#[cfg(feature = "vrl")]
 fn parse_raw_doc(
     input_format: SourceInputFormat,
     raw_doc: Bytes,
@@ -204,11 +222,12 @@ fn parse_raw_doc(
     let Some(vrl_program) = vrl_program_opt else {
         return try_into_json_docs(input_format, raw_doc, num_bytes);
     };
-    let json_doc_result = try_into_vrl_doc(input_format, raw_doc, num_bytes)
-        .and_then(|vrl_doc| vrl_program.transform_doc(vrl_doc))
-        .and_then(JsonDoc::try_from_vrl_doc);
-
-    JsonDocIterator::from(json_doc_result)
+    let vrl_doc_result = try_into_vrl_doc(input_format, raw_doc, num_bytes)
+        .and_then(|vrl_doc| vrl_program.transform_doc(vrl_doc));
+    match vrl_doc_result {
+        Ok(vrl_doc) => JsonDocIterator::from(one_or_many_from_vrl_doc(vrl_doc)),
+        Err(e) => JsonDocIterator::from(Err(e)),
+    }
 }
 
 #[cfg(not(feature = "vrl"))]
@@ -222,6 +241,9 @@ fn parse_raw_doc(
 }
 
 enum JsonDocIterator {
+    #[cfg(feature = "vrl")]
+    Multiple(std::vec::IntoIter<Result<JsonDoc, DocProcessorError>>),
+
     One(Option<Result<JsonDoc, DocProcessorError>>),
     Logs(JsonLogIterator),
     Spans(JsonSpanIterator),
@@ -232,6 +254,9 @@ impl Iterator for JsonDocIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            #[cfg(feature = "vrl")]
+            Self::Multiple(logs) => logs.next(),
+
             Self::One(opt) => opt.take(),
             Self::Logs(logs) => logs
                 .next()
@@ -250,6 +275,16 @@ where E: Into<DocProcessorError>
         match result {
             Ok(json_doc) => Self::One(Some(Ok(json_doc))),
             Err(error) => Self::One(Some(Err(error.into()))),
+        }
+    }
+}
+
+#[cfg(feature = "vrl")]
+impl From<OneOrMany<Result<JsonDoc, DocProcessorError>>> for JsonDocIterator {
+    fn from(result: OneOrMany<Result<JsonDoc, DocProcessorError>>) -> Self {
+        match result {
+            OneOrMany::One(one) => Self::from(one),
+            OneOrMany::Many(many) => Self::Multiple(many.into_iter()),
         }
     }
 }
