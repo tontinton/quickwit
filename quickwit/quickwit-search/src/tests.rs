@@ -31,6 +31,7 @@ use serde_json::{Value as JsonValue, json};
 use tantivy::Term;
 use tantivy::schema::OwnedValue as TantivyValue;
 use tantivy::time::OffsetDateTime;
+use tokio_util::sync::CancellationToken;
 
 use self::leaf::single_doc_mapping_leaf_search;
 use super::*;
@@ -1051,7 +1052,9 @@ async fn test_search_util(test_sandbox: &TestSandbox, query: &str) -> Vec<u32> {
 
     let agg_limits = searcher_context.get_aggregation_limits();
 
+    let cancel = CancellationToken::new();
     let search_response = single_doc_mapping_leaf_search(
+        cancel,
         searcher_context,
         request,
         test_sandbox.storage(),

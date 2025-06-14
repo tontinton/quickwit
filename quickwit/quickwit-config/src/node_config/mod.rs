@@ -338,7 +338,7 @@ impl Default for SearcherConfig {
 impl SearcherConfig {
     /// The timeout after which a search should be cancelled
     pub fn request_timeout(&self) -> Duration {
-        Duration::from_secs(self.request_timeout_secs.get())
+        Duration::from_millis(self.request_timeout_secs.get())
     }
     fn default_request_timeout_secs() -> NonZeroU64 {
         NonZeroU64::new(30).unwrap()

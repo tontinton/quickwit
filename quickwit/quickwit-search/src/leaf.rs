@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bytesize::ByteSize;
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use quickwit_common::pretty::PrettySample;
 use quickwit_directories::{CachingDirectory, HotDirectory, StorageDirectory};
 use quickwit_doc_mapper::{Automaton, DocMapper, FastFieldWarmupInfo, TermRange, WarmupInfo};
@@ -41,7 +41,9 @@ use tantivy::directory::FileSlice;
 use tantivy::fastfield::FastFieldReaders;
 use tantivy::schema::Field;
 use tantivy::{DateTime, Index, ReloadPolicy, Searcher, TantivyError, Term};
+use tokio::select;
 use tokio::task::JoinError;
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 
 use crate::collector::{IncrementalCollector, make_collector_for_split, make_merge_collector};
@@ -1203,6 +1205,8 @@ pub async fn multi_index_leaf_search(
     // per index, e.g. when to merge results and how to avoid lock contention.
     let mut leaf_request_tasks = Vec::new();
 
+    let cancel = CancellationToken::new();
+
     for leaf_search_request_ref in leaf_search_request.leaf_requests.into_iter() {
         let index_uri = quickwit_common::uri::Uri::from_str(
             leaf_search_request
@@ -1230,9 +1234,11 @@ pub async fn multi_index_leaf_search(
             let searcher_context = searcher_context.clone();
             let search_request = search_request.clone();
             let aggregation_limits = aggregation_limits.clone();
+            let cancel = cancel.child_token();
             async move {
                 let storage = storage_resolver.resolve(&index_uri).await?;
                 single_doc_mapping_leaf_search(
+                    cancel,
                     searcher_context,
                     search_request,
                     storage,
@@ -1247,11 +1253,17 @@ pub async fn multi_index_leaf_search(
         leaf_request_tasks.push(leaf_request_future);
     }
 
-    let leaf_responses: Vec<crate::Result<LeafSearchResponse>> = tokio::time::timeout(
-        searcher_context.searcher_config.request_timeout(),
-        try_join_all(leaf_request_tasks),
-    )
-    .await??;
+    let timeout_duration = searcher_context.searcher_config.request_timeout();
+    let timeout_fut = tokio::time::timeout(timeout_duration, try_join_all(&mut leaf_request_tasks));
+    let leaf_responses: Vec<crate::Result<LeafSearchResponse>> = match timeout_fut.await {
+        Ok(join_result) => join_result?,
+        Err(e) => {
+            cancel.cancel();
+            join_all(leaf_request_tasks).await;
+            return Err(e.into());
+        }
+    };
+
     let merge_collector = make_merge_collector(&search_request, &aggregation_limits)?;
     let mut incremental_merge_collector = IncrementalCollector::new(merge_collector);
     for result in leaf_responses {
@@ -1307,6 +1319,7 @@ fn disable_search_request_hits(search_request: &mut SearchRequest) {
 /// fetch the actual documents to convert the partial hits into actual Hits.
 #[instrument(skip_all, fields(index = ?request.index_id_patterns))]
 pub async fn single_doc_mapping_leaf_search(
+    cancel: CancellationToken,
     searcher_context: Arc<SearcherContext>,
     request: Arc<SearchRequest>,
     index_storage: Arc<dyn Storage>,
@@ -1391,19 +1404,25 @@ pub async fn single_doc_mapping_leaf_search(
     let mut split_search_join_errors: Vec<(String, JoinError)> = Vec::new();
 
     // There is no need to use `join_all`, as these are spawned tasks.
-    for (split, leaf_search_join_handle) in leaf_search_single_split_join_handles {
-        // splits that did not panic were already added to the collector
-        if let Err(join_error) = leaf_search_join_handle.await {
-            if join_error.is_cancelled() {
-                // An explicit task cancellation is not an error.
+    for (split, mut leaf_search_join_handle) in leaf_search_single_split_join_handles {
+        select! {
+            _ = cancel.cancelled() => {
+                leaf_search_join_handle.abort();
                 continue;
             }
-            if join_error.is_panic() {
-                error!(split=%split, "leaf search task panicked");
-            } else {
-                error!(split=%split, "please report: leaf search was not cancelled, and could not extract panic. this should never happen");
+            // splits that did not panic were already added to the collector
+            Err(join_error) = &mut leaf_search_join_handle => {
+                if join_error.is_cancelled() {
+                    // An explicit task cancellation is not an error.
+                    continue;
+                }
+                if join_error.is_panic() {
+                    error!(split=%split, "leaf search task panicked");
+                } else {
+                    error!(split=%split, "please report: leaf search was not cancelled, and could not extract panic. this should never happen");
+                }
+                split_search_join_errors.push((split, join_error));
             }
-            split_search_join_errors.push((split, join_error));
         }
     }
 
