@@ -133,6 +133,26 @@ pub struct ListFields {
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Eq, Hash)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScriptStep {
+    #[prost(oneof = "script_step::ScriptStep", tags = "1, 2")]
+    pub script_step: ::core::option::Option<script_step::ScriptStep>,
+}
+/// Nested message and enum types in `ScriptStep`.
+pub mod script_step {
+    #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+    #[derive(Eq, Hash)]
+    #[serde(rename_all = "snake_case")]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum ScriptStep {
+        #[prost(string, tag = "1")]
+        Filter(::prost::alloc::string::String),
+        #[prost(string, tag = "2")]
+        Map(::prost::alloc::string::String),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Eq, Hash)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchRequest {
     /// Index ID patterns
     #[prost(string, repeated, tag = "1")]
@@ -178,6 +198,9 @@ pub struct SearchRequest {
     pub search_after: ::core::option::Option<PartialHit>,
     #[prost(enumeration = "CountHits", tag = "17")]
     pub count_hits: i32,
+    /// Run filter / map on the documents right after they are fetched from doc store.
+    #[prost(message, repeated, tag = "18")]
+    pub script: ::prost::alloc::vec::Vec<ScriptStep>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Eq, Hash)]
@@ -476,6 +499,9 @@ pub struct FetchDocsRequest {
     /// `DocMapper` as json serialized trait.
     #[prost(string, tag = "6")]
     pub doc_mapper: ::prost::alloc::string::String,
+    /// Run filter / map on the documents right after they are fetched from doc store.
+    #[prost(message, repeated, tag = "8")]
+    pub script: ::prost::alloc::vec::Vec<ScriptStep>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Clone, PartialEq, ::prost::Message)]

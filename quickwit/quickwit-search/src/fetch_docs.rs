@@ -20,19 +20,24 @@ use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
 use quickwit_doc_mapper::DocMapper;
 use quickwit_proto::search::{
-    FetchDocsResponse, PartialHit, SnippetRequest, SplitIdAndFooterOffsets,
+    FetchDocsResponse, PartialHit, ScriptStep, SnippetRequest, SplitIdAndFooterOffsets,
 };
 use quickwit_storage::Storage;
 use tantivy::query::Query;
 use tantivy::schema::document::CompactDocValue;
-use tantivy::schema::{Document as DocumentTrait, Field, TantivyDocument, Value};
+use tantivy::schema::{
+    Document as DocumentTrait, Field, NamedFieldDocument, TantivyDocument, Value,
+};
 use tantivy::snippet::SnippetGenerator;
 use tantivy::{ReloadPolicy, Score, Searcher, Term};
 use tracing::{Instrument, error};
 
+use crate::GlobalDocAddress;
 use crate::leaf::open_index_with_caches;
 use crate::service::SearcherContext;
-use crate::{GlobalDocAddress, convert_document_to_json_string};
+
+#[cfg(feature = "script")]
+use crate::LuaTransformer;
 
 const SNIPPET_MAX_NUM_CHARS: usize = 150;
 
@@ -45,6 +50,7 @@ async fn fetch_docs_to_map(
     splits: &[SplitIdAndFooterOffsets],
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    script: Vec<ScriptStep>,
 ) -> anyhow::Result<HashMap<GlobalDocAddress, Document>> {
     let mut split_fetch_docs_futures = Vec::new();
 
@@ -72,6 +78,7 @@ async fn fetch_docs_to_map(
             split_and_offset,
             doc_mapper.clone(),
             snippet_request_opt,
+            script.clone(),
         ));
     }
 
@@ -112,6 +119,7 @@ pub async fn fetch_docs(
     splits: &[SplitIdAndFooterOffsets],
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    script: Vec<ScriptStep>,
 ) -> anyhow::Result<FetchDocsResponse> {
     let global_doc_addrs: Vec<GlobalDocAddress> = partial_hits
         .iter()
@@ -125,6 +133,7 @@ pub async fn fetch_docs(
         splits,
         doc_mapper,
         snippet_request_opt,
+        script,
     )
     .await?;
 
@@ -165,6 +174,7 @@ async fn fetch_docs_in_split(
     split: &SplitIdAndFooterOffsets,
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    script: Vec<ScriptStep>,
 ) -> anyhow::Result<Vec<(GlobalDocAddress, Document)>> {
     global_doc_addrs.sort_by_key(|doc| doc.doc_addr);
     // Opens the index without the ephemeral unbounded cache, this cache is indeed not useful
@@ -197,10 +207,26 @@ async fn fetch_docs_in_split(
         None
     };
 
+    #[cfg(not(feature = "script"))]
+    if !script.is_empty() {
+        anyhow::bail!("\"script\" feature must be enabled to map / filter documents with lua");
+    }
+
+    #[cfg(feature = "script")]
+    let doc_transformer = if script.is_empty() {
+        None
+    } else {
+        Some(Arc::new(LuaTransformer::new(script)?))
+    };
+
     let doc_futures = global_doc_addrs.into_iter().map(|global_doc_addr| {
         let moved_searcher = searcher.clone();
         let moved_doc_mapper = doc_mapper.clone();
         let fields_snippet_generator_opt_clone = fields_snippet_generator_opt.clone();
+
+        #[cfg(feature = "script")]
+        let moved_doc_transformer = doc_transformer.clone();
+
         async move {
             let doc: TantivyDocument = moved_searcher
                 .doc_async(global_doc_addr.doc_addr)
@@ -208,26 +234,44 @@ async fn fetch_docs_in_split(
                 .context("searcher-doc-async")?;
 
             let named_field_doc = doc.to_named_doc(moved_searcher.schema());
-            let content_json = convert_document_to_json_string(named_field_doc, &moved_doc_mapper)?;
+
+            let NamedFieldDocument(named_field_doc_map) = named_field_doc;
+            let doc_json_map = moved_doc_mapper.doc_to_json(named_field_doc_map)?;
+
+            #[cfg(feature = "script")]
+            let doc_json_map = if let Some(doc_transformer) = moved_doc_transformer {
+                let Some(transformed_doc_json_map) =
+                    doc_transformer.transform(serde_json::Value::Object(doc_json_map))?
+                else {
+                    return Ok(None);
+                };
+                transformed_doc_json_map
+            } else {
+                serde_json::Value::Object(doc_json_map)
+            };
+
+            let content_json = serde_json::to_string(&doc_json_map)
+                .expect("Json serialization should never fail.");
+
             if fields_snippet_generator_opt_clone.is_none() {
-                return Ok((
+                return Ok(Some((
                     global_doc_addr,
                     Document {
                         content_json,
                         snippet_json: None,
                     },
-                ));
+                )));
             }
 
             let fields_snippet_generator_clone = fields_snippet_generator_opt_clone.unwrap();
             if fields_snippet_generator_clone.is_empty() {
-                return Ok((
+                return Ok(Some((
                     global_doc_addr,
                     Document {
                         content_json,
                         snippet_json: None,
                     },
-                ));
+                )));
             }
 
             let mut snippets = HashMap::new();
@@ -240,19 +284,20 @@ async fn fetch_docs_in_split(
                 }
             }
             let snippet_json = serde_json::to_string(&snippets)?;
-            Ok((
+            Ok(Some((
                 global_doc_addr,
                 Document {
                     content_json,
                     snippet_json: Some(snippet_json),
                 },
-            ))
+            )))
         }
         .in_current_span()
     });
 
     futures::stream::iter(doc_futures)
         .buffer_unordered(NUM_CONCURRENT_REQUESTS)
+        .try_filter_map(|opt| async { Ok(opt) })
         .try_collect::<Vec<_>>()
         .await
 }

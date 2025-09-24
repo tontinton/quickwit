@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::ElasticDateFormat;
 use crate::elasticsearch_api::TrackTotalHits;
-use crate::elasticsearch_api::model::{SortField, default_elasticsearch_sort_order};
+use crate::elasticsearch_api::model::{ScriptStep, SortField, default_elasticsearch_sort_order};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
@@ -93,6 +93,11 @@ pub struct SearchBody {
     pub highlight: serde::de::IgnoredAny,
     #[serde(default)]
     pub version: serde::de::IgnoredAny,
+
+    // Quickwit made up values.
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_script_step")]
+    pub script: Vec<ScriptStep>,
 }
 
 struct FieldSortVecVisitor;
@@ -170,6 +175,59 @@ impl<'de> Visitor<'de> for FieldSortVecVisitor {
 fn deserialize_field_sorts<'de, D>(deserializer: D) -> Result<Option<Vec<SortField>>, D::Error>
 where D: Deserializer<'de> {
     deserializer.deserialize_any(FieldSortVecVisitor).map(Some)
+}
+
+fn deserialize_script_step<'de, D>(deserializer: D) -> Result<Vec<ScriptStep>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ScriptStepVisitor;
+
+    impl<'de> Visitor<'de> for ScriptStepVisitor {
+        type Value = Vec<ScriptStep>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a sequence of script steps")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut steps = Vec::new();
+
+            while let Some(step) = seq.next_element::<ScriptStepHelper>()? {
+                match (step.filter, step.map) {
+                    (Some(filter_code), None) => {
+                        steps.push(ScriptStep::Filter(filter_code));
+                    }
+                    (None, Some(map_code)) => {
+                        steps.push(ScriptStep::Map(map_code));
+                    }
+                    (Some(_), Some(_)) => {
+                        return Err(serde::de::Error::custom(
+                            "script step cannot have both 'filter' and 'map' fields",
+                        ));
+                    }
+                    (None, None) => {
+                        return Err(serde::de::Error::custom(
+                            "script step must have either 'filter' or 'map' field",
+                        ));
+                    }
+                }
+            }
+
+            Ok(steps)
+        }
+    }
+
+    deserializer.deserialize_seq(ScriptStepVisitor)
+}
+
+#[derive(Deserialize)]
+struct ScriptStepHelper {
+    filter: Option<String>,
+    map: Option<String>,
 }
 
 #[cfg(test)]
@@ -272,5 +330,80 @@ mod tests {
         let error_msg = search_body.unwrap_err().to_string();
         assert!(error_msg.contains("unknown field `term`"));
         assert!(error_msg.contains("expected one of "));
+    }
+
+    #[test]
+    fn test_script_step_map_only() {
+        let json = r#"
+        {
+            "script": [
+                {"map": "return x * 2"}
+            ]
+        }
+        "#;
+        let test_struct: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(test_struct.script.len(), 1);
+        assert_eq!(
+            test_struct.script[0],
+            ScriptStep::Map("return x * 2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_script_step_filter_only() {
+        let json = r#"
+        {
+            "script": [
+                {"filter": "return x > 2"}
+            ]
+        }
+        "#;
+        let test_struct: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(test_struct.script.len(), 1);
+        assert_eq!(
+            test_struct.script[0],
+            ScriptStep::Filter("return x > 2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_script_step_multiple_steps() {
+        let json = r#"
+        {
+            "script": [
+                {"map": "return x * 2"},
+                {"filter": "return x > 2"}
+            ]
+        }
+        "#;
+        let test_struct: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(test_struct.script.len(), 2);
+        assert_eq!(
+            test_struct.script[0],
+            ScriptStep::Map("return x * 2".to_string())
+        );
+        assert_eq!(
+            test_struct.script[1],
+            ScriptStep::Filter("return x > 2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_script_step_both_in_one_object() {
+        let json = r#"
+        {
+            "script": [
+                {"map": "return x * 2", "filter": "return x > 2"}
+            ]
+        }
+        "#;
+        let result = serde_json::from_str::<SearchBody>(json);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("script step cannot have both 'filter' and 'map' fields")
+        );
     }
 }

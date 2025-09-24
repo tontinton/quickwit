@@ -53,6 +53,12 @@ pub struct SortField {
     pub date_format: Option<ElasticDateFormat>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ScriptStep {
+    Filter(String),
+    Map(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ElasticDateFormat {

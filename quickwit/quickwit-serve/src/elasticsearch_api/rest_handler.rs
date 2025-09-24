@@ -29,8 +29,8 @@ use quickwit_index_management::IndexService;
 use quickwit_metastore::*;
 use quickwit_proto::metastore::MetastoreServiceClient;
 use quickwit_proto::search::{
-    CountHits, ListFieldsResponse, PartialHit, ScrollRequest, SearchResponse, SortByValue,
-    SortDatetimeFormat,
+    CountHits, ListFieldsResponse, PartialHit, ScriptStep, ScrollRequest, SearchResponse,
+    SortByValue, SortDatetimeFormat, script_step,
 };
 use quickwit_proto::types::IndexUid;
 use quickwit_query::BooleanOperand;
@@ -396,6 +396,19 @@ fn build_request_for_es_api(
     let has_doc_id_field = sort_fields.iter().any(is_doc_field);
     let search_after = partial_hit_from_search_after_param(search_body.search_after, &sort_fields)?;
 
+    let script: Vec<ScriptStep> = search_body
+        .script
+        .into_iter()
+        .map(|s| match s {
+            super::model::ScriptStep::Filter(x) => ScriptStep {
+                script_step: Some(script_step::ScriptStep::Filter(x)),
+            },
+            super::model::ScriptStep::Map(x) => ScriptStep {
+                script_step: Some(script_step::ScriptStep::Map(x)),
+            },
+        })
+        .collect();
+
     Ok((
         quickwit_proto::search::SearchRequest {
             index_id_patterns,
@@ -410,6 +423,7 @@ fn build_request_for_es_api(
             scroll_ttl_secs,
             search_after,
             count_hits,
+            script,
         },
         has_doc_id_field,
     ))

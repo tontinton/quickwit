@@ -32,7 +32,7 @@ use quickwit_proto::metastore::{
 };
 use quickwit_proto::search::{
     FetchDocsRequest, FetchDocsResponse, Hit, LeafHit, LeafRequestRef, LeafSearchRequest,
-    LeafSearchResponse, PartialHit, SearchPlanResponse, SearchRequest, SearchResponse,
+    LeafSearchResponse, PartialHit, ScriptStep, SearchPlanResponse, SearchRequest, SearchResponse,
     SnippetRequest, SortDatetimeFormat, SortField, SortValue, SplitIdAndFooterOffsets,
 };
 use quickwit_proto::types::{IndexUid, SplitId};
@@ -366,6 +366,7 @@ fn simplify_search_request_for_scroll_api(req: &SearchRequest) -> crate::Result<
         // request is simplified after initial query, and we cache the hit count, so we don't need
         // to recompute it afterward.
         count_hits: quickwit_proto::search::CountHits::Underestimate as i32,
+        script: req.script.clone(),
     })
 }
 
@@ -839,6 +840,7 @@ pub(crate) async fn fetch_docs_phase(
             snippet_request.clone(),
             indexes_metas_for_leaf_search,
             client_jobs,
+            &search_request.script,
         )?;
         for fetch_docs_request in fetch_jobs_requests {
             fetch_docs_tasks.push(cluster_client.fetch_docs(fetch_docs_request, client.clone()));
@@ -1711,6 +1713,7 @@ pub fn jobs_to_fetch_docs_requests(
     snippet_request_opt: Option<SnippetRequest>,
     indexes_metas_for_leaf_search: &IndexesMetasForLeafSearch,
     jobs: Vec<FetchDocsJob>,
+    script: &[ScriptStep],
 ) -> crate::Result<Vec<FetchDocsRequest>> {
     let mut fetch_docs_requests = Vec::new();
     // Group jobs by index uid.
@@ -1741,6 +1744,7 @@ pub fn jobs_to_fetch_docs_requests(
                 index_uri: index_meta.index_uri.to_string(),
                 snippet_request: snippet_request_opt.clone(),
                 doc_mapper: index_meta.doc_mapper_str.clone(),
+                script: script.to_vec(),
             };
             fetch_docs_requests.push(fetch_docs_req);
 

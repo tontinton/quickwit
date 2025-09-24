@@ -215,6 +215,7 @@ impl SearchService for SearchServiceImpl {
             &fetch_docs_request.split_offsets,
             doc_mapper,
             snippet_request_opt,
+            fetch_docs_request.script,
         )
         .await?;
 

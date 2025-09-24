@@ -202,6 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ListFieldSerialized", "#[derive(Eq)]")
         .type_attribute("SortByValue", "#[derive(Ord, PartialOrd)]")
         .type_attribute("SortField", "#[derive(Eq, Hash)]")
+        .type_attribute("ScriptStep", "#[derive(Eq, Hash)]")
+        .type_attribute("ScriptStep.script_step", "#[derive(Eq, Hash)]")
         .out_dir("src/codegen/quickwit")
         .compile_protos_with_config(prost_config, &["protos/quickwit/search.proto"], &["protos"])?;
 

@@ -48,6 +48,7 @@ quickwit-metastore = { workspace = true }
 quickwit-opentelemetry = { workspace = true }
 quickwit-proto = { workspace = true }
 quickwit-query = { workspace = true }
+quickwit-script = { workspace = true, optional = true }
 quickwit-storage = { workspace = true }
 
 [dev-dependencies]
@@ -64,3 +65,4 @@ quickwit-storage = { workspace = true, features = ["testsuite"] }
 [features]
 testsuite = []
 ci-test = []
+script = ["quickwit-script"]

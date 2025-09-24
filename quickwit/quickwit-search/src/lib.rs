@@ -40,6 +40,11 @@ pub(crate) mod top_k_collector;
 mod metrics;
 mod search_permit_provider;
 
+#[cfg(feature = "script")]
+mod lua_transformer;
+#[cfg(feature = "script")]
+use lua_transformer::LuaTransformer;
+
 #[cfg(test)]
 mod tests;
 
@@ -243,6 +248,7 @@ pub async fn resolve_index_patterns(
 ///
 /// We perform this conversion at leaf level only to avoid having
 /// another intermediate json format between the leaves and the root.
+#[allow(dead_code)]
 fn convert_document_to_json_string(
     named_field_doc: NamedFieldDocument,
     doc_mapper: &DocMapper,

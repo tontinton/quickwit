@@ -182,6 +182,13 @@ message ListFields {
 }
 // -- Search -------------------
 
+message ScriptStep {
+  oneof script_step {
+  string filter = 1;
+  string map = 2;
+  }
+}
+
 message SearchRequest {
   // Index ID patterns
   repeated string index_id_patterns = 1;
@@ -240,6 +247,9 @@ message SearchRequest {
   optional PartialHit search_after = 16;
 
   CountHits count_hits = 17;
+
+  // Run filter / map on the documents right after they are fetched from doc store.
+  repeated ScriptStep script = 18;
 }
 
 enum CountHits {
@@ -510,6 +520,9 @@ message FetchDocsRequest {
   string doc_mapper = 6;
 
   reserved 5;
+
+  // Run filter / map on the documents right after they are fetched from doc store.
+  repeated ScriptStep script = 8;
 }
 
 message FetchDocsResponse {

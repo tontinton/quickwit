@@ -7412,6 +7412,7 @@ dependencies = [
  "quickwit-opentelemetry",
  "quickwit-proto",
  "quickwit-query",
+ "quickwit-script",
  "quickwit-storage",
  "rand 0.8.5",
  "rayon",

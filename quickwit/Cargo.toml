@@ -345,6 +345,7 @@ quickwit-query = { path = "quickwit-query" }
 quickwit-rest-client = { path = "quickwit-rest-client" }
 quickwit-search = { path = "quickwit-search" }
 quickwit-serve = { path = "quickwit-serve" }
+quickwit-script = { path = "quickwit-script" }
 quickwit-storage = { path = "quickwit-storage" }
 quickwit-telemetry = { path = "quickwit-telemetry" }
 
