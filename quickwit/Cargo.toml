@@ -29,6 +29,7 @@ members = [
   "quickwit-proto",
   "quickwit-query",
   "quickwit-rest-client",
+  "quickwit-script",
   "quickwit-search",
   "quickwit-serve",
   "quickwit-storage",
@@ -148,6 +149,7 @@ lru = "0.13"
 matches = "0.1"
 md5 = "0.7"
 mime_guess = "2.0"
+mlua = { version = "0.11.3", features = ["luajit"] }
 mockall = "0.11"
 mrecordlog = { git = "https://github.com/quickwit-oss/mrecordlog", rev = "306c0a7" }
 new_string_template = "1.5"
