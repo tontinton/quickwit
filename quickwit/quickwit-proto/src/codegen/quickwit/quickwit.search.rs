@@ -509,6 +509,9 @@ pub struct FetchDocsResponse {
     /// List of complete hits.
     #[prost(message, repeated, tag = "1")]
     pub hits: ::prost::alloc::vec::Vec<LeafHit>,
+    /// Number of documents before filtering.
+    #[prost(int64, tag = "2")]
+    pub num_docs: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Clone, PartialEq, ::prost::Message)]

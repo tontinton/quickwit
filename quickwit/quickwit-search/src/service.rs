@@ -358,7 +358,7 @@ pub(crate) async fn scroll(
     }
 
     // Fetch the actual documents.
-    let hits: Vec<Hit> = fetch_docs_phase(
+    let (hits, num_docs): (Vec<Hit>, u64) = fetch_docs_phase(
         &scroll_context.indexes_metas_for_leaf_search,
         &partial_hits[..],
         &scroll_context.split_metadatas[..],
@@ -367,10 +367,8 @@ pub(crate) async fn scroll(
     )
     .await?;
 
-    let next_scroll_id = current_scroll.next_page(
-        hits.len() as u64,
-        partial_hits.last().cloned().unwrap_or_default(),
-    );
+    let next_scroll_id =
+        current_scroll.next_page(num_docs, partial_hits.last().cloned().unwrap_or_default());
 
     if let Some(scroll_ttl_secs) = scroll_request.scroll_ttl_secs
         && scroll_context_modified

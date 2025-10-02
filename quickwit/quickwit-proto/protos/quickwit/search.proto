@@ -528,6 +528,9 @@ message FetchDocsRequest {
 message FetchDocsResponse {
   // List of complete hits.
   repeated LeafHit hits = 1;
+
+  // Number of documents before filtering.
+  int64 num_docs = 2;
 }
 
 message ListTermsRequest {

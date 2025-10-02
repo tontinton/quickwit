@@ -153,7 +153,10 @@ pub async fn fetch_docs(
             }
         })
         .collect();
-    Ok(FetchDocsResponse { hits })
+    Ok(FetchDocsResponse {
+        hits,
+        num_docs: partial_hits.len() as i64,
+    })
 }
 
 // number of concurrent fetch allowed for a single split.

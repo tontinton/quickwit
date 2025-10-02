@@ -812,7 +812,7 @@ pub(crate) async fn fetch_docs_phase(
     split_metadatas: &[SplitMetadata],
     search_request: &SearchRequest,
     cluster_client: &ClusterClient,
-) -> crate::Result<Vec<Hit>> {
+) -> crate::Result<(Vec<Hit>, u64)> {
     let snippet_request: Option<SnippetRequest> = get_snippet_request(search_request);
     let hit_order: HashMap<(String, u32, u32), usize> = partial_hits
         .iter()
@@ -847,6 +847,11 @@ pub(crate) async fn fetch_docs_phase(
         }
     }
     let fetch_docs_responses: Vec<FetchDocsResponse> = try_join_all(fetch_docs_tasks).await?;
+
+    let num_docs: u64 = fetch_docs_responses
+        .iter()
+        .map(|response| response.num_docs as u64)
+        .sum();
 
     // Merge the fetched docs.
     let leaf_hits = fetch_docs_responses
@@ -887,7 +892,7 @@ pub(crate) async fn fetch_docs_phase(
         .map(|(_position, hit)| hit)
         .collect();
 
-    Ok(hits)
+    Ok((hits, num_docs))
 }
 
 fn build_hit_with_position(
@@ -981,7 +986,7 @@ async fn root_search_aux(
     )
     .await?;
 
-    let hits = fetch_docs_phase(
+    let (hits, _) = fetch_docs_phase(
         indexes_metas_for_leaf_search,
         &first_phase_result.partial_hits,
         &split_metadatas[..],
