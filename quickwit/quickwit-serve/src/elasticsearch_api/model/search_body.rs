@@ -61,6 +61,13 @@ struct FieldSortParams {
     pub date_format: Option<ElasticDateFormat>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub enum SourceFields {
+    #[default]
+    All,
+    Some(Vec<String>),
+}
+
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SearchBody {
@@ -81,10 +88,10 @@ pub struct SearchBody {
     pub stored_fields: Option<BTreeSet<String>>,
     #[serde(default)]
     pub search_after: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub _source: SourceFields,
 
     // Ignored values, only here for compatibility with OpenSearch Dashboards.
-    #[serde(default)]
-    pub _source: serde::de::IgnoredAny,
     #[serde(default)]
     pub docvalue_fields: serde::de::IgnoredAny,
     #[serde(default)]
@@ -170,6 +177,51 @@ impl<'de> Visitor<'de> for FieldSortVecVisitor {
 fn deserialize_field_sorts<'de, D>(deserializer: D) -> Result<Option<Vec<SortField>>, D::Error>
 where D: Deserializer<'de> {
     deserializer.deserialize_any(FieldSortVecVisitor).map(Some)
+}
+
+impl<'de> Deserialize<'de> for SourceFields {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: Deserializer<'de> {
+        struct SourceVisitor;
+
+        impl<'de> Visitor<'de> for SourceVisitor {
+            type Value = SourceFields;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("_source to be boolean, string, or array[string]")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+            where E: serde::de::Error {
+                Ok(if value {
+                    SourceFields::All
+                } else {
+                    SourceFields::Some(vec![])
+                })
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where E: serde::de::Error {
+                Ok(SourceFields::Some(vec![value.to_owned()]))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where E: serde::de::Error {
+                Ok(SourceFields::Some(vec![value]))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where A: serde::de::SeqAccess<'de> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element::<String>()? {
+                    items.push(item);
+                }
+                Ok(SourceFields::Some(items))
+            }
+        }
+
+        deserializer.deserialize_any(SourceVisitor)
+    }
 }
 
 #[cfg(test)]
@@ -272,5 +324,46 @@ mod tests {
         let error_msg = search_body.unwrap_err().to_string();
         assert!(error_msg.contains("unknown field `term`"));
         assert!(error_msg.contains("expected one of "));
+    }
+
+    #[test]
+    fn test_source_default() {
+        let json = r#"{}"#;
+        let search_body: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(search_body._source, SourceFields::All);
+    }
+
+    #[test]
+    fn test_source_true() {
+        let json = r#"{ "_source": true }"#;
+        let search_body: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(search_body._source, SourceFields::All);
+    }
+
+    #[test]
+    fn test_source_false() {
+        let json = r#"{ "_source": false }"#;
+        let search_body: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(search_body._source, SourceFields::Some(vec![]));
+    }
+
+    #[test]
+    fn test_source_single_string() {
+        let json = r#"{ "_source": "field1" }"#;
+        let search_body: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            search_body._source,
+            SourceFields::Some(vec!["field1".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_source_array() {
+        let json = r#"{ "_source": ["field1", "field2"] }"#;
+        let search_body: SearchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            search_body._source,
+            SourceFields::Some(vec!["field1".to_string(), "field2".to_string()])
+        );
     }
 }
