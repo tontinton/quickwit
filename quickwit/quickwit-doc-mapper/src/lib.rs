@@ -29,6 +29,8 @@ mod routing_expression;
 /// Pruning tags manipulation.
 pub mod tag_pruning;
 
+use std::borrow::Cow;
+
 pub use doc_mapper::{
     Automaton, BinaryFormat, DocMapper, DocMapperBuilder, FastFieldWarmupInfo, FieldMappingEntry,
     FieldMappingType, JsonObject, NamedField, QuickwitBytesOptions, QuickwitJsonOptions, TermRange,
@@ -44,6 +46,8 @@ pub use error::{DocParsingError, QueryParserError};
 use quickwit_common::shared_consts::FIELD_PRESENCE_FIELD_NAME;
 use quickwit_proto::types::DocMappingUid;
 pub use routing_expression::RoutingExpr;
+
+use crate::routing_expression::parse_field_name;
 
 /// Field name reserved for storing the source document.
 pub const SOURCE_FIELD_NAME: &str = "_source";
@@ -69,6 +73,11 @@ pub enum Cardinality {
     SingleValued,
     /// Multivalued field.
     MultiValued,
+}
+
+/// Parse and split a field name into a list of paths, de-escaping where appropriate.
+pub fn split_field_name(input: &str) -> anyhow::Result<Vec<Cow<'_, str>>> {
+    parse_field_name(input)
 }
 
 #[derive(utoipa::OpenApi)]

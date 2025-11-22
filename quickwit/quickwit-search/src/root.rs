@@ -33,7 +33,8 @@ use quickwit_proto::metastore::{
 use quickwit_proto::search::{
     FetchDocsRequest, FetchDocsResponse, Hit, LeafHit, LeafRequestRef, LeafSearchRequest,
     LeafSearchResponse, PartialHit, SearchPlanResponse, SearchRequest, SearchResponse,
-    SnippetRequest, SortDatetimeFormat, SortField, SortValue, SplitIdAndFooterOffsets,
+    SnippetRequest, SortDatetimeFormat, SortField, SortValue, SourceFields,
+    SplitIdAndFooterOffsets,
 };
 use quickwit_proto::types::{IndexUid, SplitId};
 use quickwit_query::query_ast::{
@@ -367,6 +368,7 @@ fn simplify_search_request_for_scroll_api(req: &SearchRequest) -> crate::Result<
         // to recompute it afterward.
         count_hits: quickwit_proto::search::CountHits::Underestimate as i32,
         ignore_missing_indexes: req.ignore_missing_indexes,
+        source_fields: req.source_fields.clone(),
     })
 }
 
@@ -838,6 +840,7 @@ pub(crate) async fn fetch_docs_phase(
         let fetch_jobs_requests = jobs_to_fetch_docs_requests(
             snippet_request.clone(),
             indexes_metas_for_leaf_search,
+            &search_request.source_fields,
             client_jobs,
         )?;
         for fetch_docs_request in fetch_jobs_requests {
@@ -1720,6 +1723,7 @@ pub fn jobs_to_leaf_request(
 pub fn jobs_to_fetch_docs_requests(
     snippet_request_opt: Option<SnippetRequest>,
     indexes_metas_for_leaf_search: &IndexesMetasForLeafSearch,
+    source_fields: &Option<SourceFields>,
     jobs: Vec<FetchDocsJob>,
 ) -> crate::Result<Vec<FetchDocsRequest>> {
     let mut fetch_docs_requests = Vec::new();
@@ -1751,6 +1755,7 @@ pub fn jobs_to_fetch_docs_requests(
                 index_uri: index_meta.index_uri.to_string(),
                 snippet_request: snippet_request_opt.clone(),
                 doc_mapper: index_meta.doc_mapper_str.clone(),
+                source_fields: source_fields.clone(),
             };
             fetch_docs_requests.push(fetch_docs_req);
 

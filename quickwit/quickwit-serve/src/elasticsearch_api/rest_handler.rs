@@ -58,7 +58,7 @@ use super::model::{
     ElasticsearchResponse, ElasticsearchStatsResponse, FieldCapabilityQueryParams,
     FieldCapabilityRequestBody, FieldCapabilityResponse, MultiSearchHeader, MultiSearchQueryParams,
     MultiSearchResponse, MultiSearchSingleResponse, ScrollQueryParams, SearchBody,
-    SearchQueryParams, SearchQueryParamsCount, StatsResponseEntry,
+    SearchQueryParams, SearchQueryParamsCount, SourceFields, StatsResponseEntry,
     build_list_field_request_for_es_api, convert_to_es_field_capabilities_response,
 };
 use super::{TrackTotalHits, make_elastic_api_response};
@@ -397,6 +397,11 @@ fn build_request_for_es_api(
     let has_doc_id_field = sort_fields.iter().any(is_doc_field);
     let search_after = partial_hit_from_search_after_param(search_body.search_after, &sort_fields)?;
 
+    let source_fields = match search_body._source {
+        SourceFields::All => None,
+        SourceFields::Some(keep) => Some(quickwit_proto::search::SourceFields { keep }),
+    };
+
     Ok((
         quickwit_proto::search::SearchRequest {
             index_id_patterns,
@@ -412,6 +417,7 @@ fn build_request_for_es_api(
             search_after,
             count_hits,
             ignore_missing_indexes,
+            source_fields,
         },
         has_doc_id_field,
     ))

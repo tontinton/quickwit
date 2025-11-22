@@ -22,7 +22,7 @@ use quickwit_indexing::TestSandbox;
 use quickwit_opentelemetry::otlp::TraceId;
 use quickwit_proto::search::{
     LeafListTermsResponse, ListTermsRequest, SearchRequest, SortByValue, SortField, SortOrder,
-    SortValue,
+    SortValue, SourceFields,
 };
 use quickwit_query::query_ast::{
     QueryAst, qast_helper, qast_json_helper, query_ast_from_user_text,
@@ -1199,10 +1199,30 @@ fn test_convert_leaf_hit_aux(
     document_json: JsonValue,
     expected_hit_json: JsonValue,
 ) {
+    test_convert_leaf_hit_aux_with_source_fields(
+        default_doc_mapper_json,
+        document_json,
+        expected_hit_json,
+        None,
+    )
+}
+
+#[track_caller]
+fn test_convert_leaf_hit_aux_with_source_fields(
+    default_doc_mapper_json: JsonValue,
+    document_json: JsonValue,
+    expected_hit_json: JsonValue,
+    source_fields: Option<SourceFields>,
+) {
     let default_doc_mapper: DocMapper = serde_json::from_value(default_doc_mapper_json).unwrap();
     let named_field_doc = json_to_named_field_doc(document_json);
+    let mut split_source_fields = None;
+    if let Some(source_fields) = source_fields {
+        split_source_fields = Some(split_field_paths(&source_fields.keep).unwrap());
+    }
     let hit_json_str =
-        convert_document_to_json_string(named_field_doc, &default_doc_mapper).unwrap();
+        convert_document_to_json_string(named_field_doc, &default_doc_mapper, split_source_fields)
+            .unwrap();
     let hit_json: JsonValue = serde_json::from_str(&hit_json_str).unwrap();
     assert_eq!(hit_json, expected_hit_json);
 }
@@ -1303,6 +1323,134 @@ fn test_convert_leaf_object_used_to_be_dynamic() {
         }),
         json!({ "_dynamic": [{ "user": {"email": "werwe33@quickwit.io"}}], "user.username": ["fulmicoton"] }),
         json!({ "user": {"username": "fulmicoton", "email": "werwe33@quickwit.io"}}),
+    );
+}
+
+#[test]
+fn test_source_fields_keep_some_fields() {
+    let default_doc_mapper_json = json!({
+        "field_mappings": [
+            { "name": "body", "type": "text" },
+            { "name": "title", "type": "text" },
+            { "name": "author", "type": "text" }
+        ],
+        "mode": "lenient"
+    });
+
+    let document_json = json!({
+        "body": "Hello world",
+        "title": "Greetings",
+        "author": "Alice"
+    });
+
+    let source_fields = Some(SourceFields {
+        keep: vec!["body".into(), "author".into()],
+    });
+
+    let expected_hit_json = json!({
+        "body": "Hello world",
+        "author": "Alice"
+    });
+
+    test_convert_leaf_hit_aux_with_source_fields(
+        default_doc_mapper_json,
+        document_json,
+        expected_hit_json,
+        source_fields,
+    );
+}
+
+#[test]
+fn test_source_fields_keep_all_fields() {
+    let default_doc_mapper_json = json!({
+        "field_mappings": [
+            { "name": "body", "type": "text" },
+            { "name": "title", "type": "text" }
+        ],
+        "mode": "lenient"
+    });
+
+    let document_json = json!({
+        "body": "Hello world",
+        "title": "Greetings"
+    });
+
+    let source_fields: Option<SourceFields> = None;
+
+    let expected_hit_json = document_json.clone();
+
+    test_convert_leaf_hit_aux_with_source_fields(
+        default_doc_mapper_json,
+        document_json,
+        expected_hit_json,
+        source_fields,
+    );
+}
+
+#[test]
+fn test_source_fields_keep_nested_fields() {
+    let default_doc_mapper_json = json!({
+        "field_mappings": [
+            {
+                "name": "user",
+                "type": "object",
+                "field_mappings": [
+                    { "name": "username", "type": "text" },
+                    { "name": "email", "type": "text" },
+                    { "name": "bio", "type": "text" }
+                ]
+            },
+            { "name": "content", "type": "text" }
+        ],
+        "mode": "lenient"
+    });
+
+    let document_json = json!({
+        "user.username": ["alice"],
+        "user.email": ["alice@example.com"],
+        "user.bio": ["I like Rust"],
+        "content": "Hello world"
+    });
+
+    let source_fields = Some(SourceFields {
+        keep: vec!["user.username".into(), "content".into()],
+    });
+
+    let expected_hit_json = json!({
+        "user": { "username": "alice" },
+        "content": "Hello world"
+    });
+
+    test_convert_leaf_hit_aux_with_source_fields(
+        default_doc_mapper_json,
+        document_json,
+        expected_hit_json,
+        source_fields,
+    );
+}
+
+#[test]
+fn test_source_fields_empty_keep_list() {
+    let default_doc_mapper_json = json!({
+        "field_mappings": [
+            { "name": "body", "type": "text" }
+        ],
+        "mode": "lenient"
+    });
+
+    let document_json = json!({
+        "body": "Hello world"
+    });
+
+    let source_fields = Some(SourceFields { keep: vec![] });
+
+    let expected_hit_json = json!({});
+
+    test_convert_leaf_hit_aux_with_source_fields(
+        default_doc_mapper_json,
+        document_json,
+        expected_hit_json,
+        source_fields,
     );
 }
 

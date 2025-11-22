@@ -247,6 +247,13 @@ message SearchRequest {
   // When an exact index ID is provided (not a pattern), the query fails only if
   // that index is not found and this parameter is set to `false`.
   bool ignore_missing_indexes = 18;
+
+  // Which fields to keep in _source, none meaning keep all the fields.
+  optional SourceFields source_fields = 19;
+}
+
+message SourceFields {
+  repeated string keep = 1;
 }
 
 enum CountHits {
@@ -515,6 +522,9 @@ message FetchDocsRequest {
 
   // `DocMapper` as json serialized trait.
   string doc_mapper = 6;
+
+  // Which fields to keep in _source, none meaning keep all the fields.
+  optional SourceFields source_fields = 8;
 
   reserved 5;
 }

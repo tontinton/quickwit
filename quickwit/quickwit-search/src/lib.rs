@@ -47,10 +47,11 @@ pub use collector::QuickwitAggregations;
 use metrics::SEARCH_METRICS;
 use quickwit_common::thread_pool::ThreadPool;
 use quickwit_common::tower::Pool;
-use quickwit_doc_mapper::DocMapper;
+use quickwit_doc_mapper::{DocMapper, split_field_name};
 use quickwit_proto::metastore::{
     ListIndexesMetadataRequest, ListSplitsRequest, MetastoreService, MetastoreServiceClient,
 };
+use serde_json::{Map, Value};
 use tantivy::schema::NamedFieldDocument;
 
 /// Refer to this as `crate::Result<T>`.
@@ -238,6 +239,57 @@ pub async fn resolve_index_patterns(
     Ok(indexes_metadata)
 }
 
+fn split_field_paths(paths: &[String]) -> anyhow::Result<Vec<Vec<String>>> {
+    paths
+        .iter()
+        .map(|s| {
+            Ok(split_field_name(s)?
+                .into_iter()
+                .map(|p| p.into_owned())
+                .collect())
+        })
+        .collect()
+}
+
+fn filter_source_fields(
+    doc_map: &mut Map<String, Value>,
+    keep_paths: &[Vec<String>],
+    parent_path: &[&str],
+) {
+    doc_map.retain(|key, value| {
+        let current_len = parent_path.len();
+        let mut matched = false;
+
+        'outer: for p in keep_paths {
+            if p.len() < current_len + 1 {
+                continue;
+            }
+            for (i, &seg) in parent_path.iter().enumerate() {
+                if seg != p[i] {
+                    continue 'outer;
+                }
+            }
+            if p[current_len] == key.as_str() {
+                matched = true;
+                break;
+            }
+        }
+
+        if !matched {
+            return false;
+        }
+
+        if let Value::Object(nested_map) = value {
+            let mut new_parent = Vec::with_capacity(parent_path.len() + 1);
+            new_parent.extend_from_slice(parent_path);
+            new_parent.push(key);
+            filter_source_fields(nested_map, keep_paths, &new_parent);
+        }
+
+        true
+    });
+}
+
 /// Converts a Tantivy `NamedFieldDocument` into a json string using the
 /// schema defined by the DocMapper.
 ///
@@ -246,9 +298,13 @@ pub async fn resolve_index_patterns(
 fn convert_document_to_json_string(
     named_field_doc: NamedFieldDocument,
     doc_mapper: &DocMapper,
+    source_fields: Option<Vec<Vec<String>>>,
 ) -> anyhow::Result<String> {
     let NamedFieldDocument(named_field_doc_map) = named_field_doc;
-    let doc_json_map = doc_mapper.doc_to_json(named_field_doc_map)?;
+    let mut doc_json_map = doc_mapper.doc_to_json(named_field_doc_map)?;
+    if let Some(source_fields) = source_fields {
+        filter_source_fields(&mut doc_json_map, &source_fields, &[]);
+    }
     let content_json =
         serde_json::to_string(&doc_json_map).expect("Json serialization should never fail.");
     Ok(content_json)

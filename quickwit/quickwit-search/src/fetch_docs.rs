@@ -20,7 +20,7 @@ use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
 use quickwit_doc_mapper::DocMapper;
 use quickwit_proto::search::{
-    FetchDocsResponse, PartialHit, SnippetRequest, SplitIdAndFooterOffsets,
+    FetchDocsResponse, PartialHit, SnippetRequest, SourceFields, SplitIdAndFooterOffsets,
 };
 use quickwit_storage::Storage;
 use tantivy::query::Query;
@@ -32,7 +32,7 @@ use tracing::{Instrument, error};
 
 use crate::leaf::open_index_with_caches;
 use crate::service::SearcherContext;
-use crate::{GlobalDocAddress, convert_document_to_json_string};
+use crate::{GlobalDocAddress, convert_document_to_json_string, split_field_paths};
 
 const SNIPPET_MAX_NUM_CHARS: usize = 150;
 
@@ -45,6 +45,7 @@ async fn fetch_docs_to_map(
     splits: &[SplitIdAndFooterOffsets],
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    source_fields: &Option<SourceFields>,
 ) -> anyhow::Result<HashMap<GlobalDocAddress, Document>> {
     let mut split_fetch_docs_futures = Vec::new();
 
@@ -72,6 +73,7 @@ async fn fetch_docs_to_map(
             split_and_offset,
             doc_mapper.clone(),
             snippet_request_opt,
+            source_fields,
         ));
     }
 
@@ -112,6 +114,7 @@ pub async fn fetch_docs(
     splits: &[SplitIdAndFooterOffsets],
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    source_fields: &Option<SourceFields>,
 ) -> anyhow::Result<FetchDocsResponse> {
     let global_doc_addrs: Vec<GlobalDocAddress> = partial_hits
         .iter()
@@ -125,6 +128,7 @@ pub async fn fetch_docs(
         splits,
         doc_mapper,
         snippet_request_opt,
+        source_fields,
     )
     .await?;
 
@@ -165,6 +169,7 @@ async fn fetch_docs_in_split(
     split: &SplitIdAndFooterOffsets,
     doc_mapper: Arc<DocMapper>,
     snippet_request_opt: Option<&SnippetRequest>,
+    source_fields: &Option<SourceFields>,
 ) -> anyhow::Result<Vec<(GlobalDocAddress, Document)>> {
     global_doc_addrs.sort_by_key(|doc| doc.doc_addr);
     // Opens the index without the ephemeral unbounded cache, this cache is indeed not useful
@@ -197,10 +202,16 @@ async fn fetch_docs_in_split(
         None
     };
 
+    let mut split_source_fields = None;
+    if let Some(source_fields) = source_fields {
+        split_source_fields = Some(split_field_paths(&source_fields.keep)?);
+    }
+
     let doc_futures = global_doc_addrs.into_iter().map(|global_doc_addr| {
         let moved_searcher = searcher.clone();
         let moved_doc_mapper = doc_mapper.clone();
         let fields_snippet_generator_opt_clone = fields_snippet_generator_opt.clone();
+        let split_source_fields = split_source_fields.clone();
         async move {
             let doc: TantivyDocument = moved_searcher
                 .doc_async(global_doc_addr.doc_addr)
@@ -208,7 +219,11 @@ async fn fetch_docs_in_split(
                 .context("searcher-doc-async")?;
 
             let named_field_doc = doc.to_named_doc(moved_searcher.schema());
-            let content_json = convert_document_to_json_string(named_field_doc, &moved_doc_mapper)?;
+            let content_json = convert_document_to_json_string(
+                named_field_doc,
+                &moved_doc_mapper,
+                split_source_fields,
+            )?;
             if fields_snippet_generator_opt_clone.is_none() {
                 return Ok((
                     global_doc_addr,

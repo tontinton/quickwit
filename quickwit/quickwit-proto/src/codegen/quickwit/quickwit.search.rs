@@ -185,6 +185,16 @@ pub struct SearchRequest {
     /// that index is not found and this parameter is set to `false`.
     #[prost(bool, tag = "18")]
     pub ignore_missing_indexes: bool,
+    /// Which fields to keep in _source, none meaning keep all the fields.
+    #[prost(message, optional, tag = "19")]
+    pub source_fields: ::core::option::Option<SourceFields>,
+}
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Eq, Hash)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceFields {
+    #[prost(string, repeated, tag = "1")]
+    pub keep: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Eq, Hash)]
@@ -483,6 +493,9 @@ pub struct FetchDocsRequest {
     /// `DocMapper` as json serialized trait.
     #[prost(string, tag = "6")]
     pub doc_mapper: ::prost::alloc::string::String,
+    /// Which fields to keep in _source, none meaning keep all the fields.
+    #[prost(message, optional, tag = "8")]
+    pub source_fields: ::core::option::Option<SourceFields>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[derive(Clone, PartialEq, ::prost::Message)]
